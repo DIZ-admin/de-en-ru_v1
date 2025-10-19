@@ -18,6 +18,93 @@ type VoiceMetrics = {
 const rawVoiceDuration = Number(process.env.NEXT_PUBLIC_VOICE_MAX_DURATION ?? "60");
 const VOICE_MAX_DURATION = Number.isFinite(rawVoiceDuration) && rawVoiceDuration > 0 ? rawVoiceDuration : 60;
 const CONFIDENCE_THRESHOLD = 0.7;
+const DEFAULT_ALLOWED_AUDIO_TYPES = [
+  "audio/webm",
+  "video/webm",
+  "audio/ogg",
+  "application/ogg",
+  "audio/oga",
+  "audio/mpeg",
+  "audio/mpga",
+  "audio/mp4",
+  "audio/mp4a-latm",
+  "audio/x-m4a",
+  "video/mp4",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/flac",
+  "audio/x-flac",
+  "video/mpeg",
+];
+const DEFAULT_ALLOWED_EXTENSIONS = [
+  "webm",
+  "ogg",
+  "oga",
+  "m4a",
+  "mp4",
+  "mp3",
+  "mpga",
+  "wav",
+  "flac",
+  "mpeg",
+];
+
+const SUPPORTED_FORMATS_LABEL = ["webm", "ogg", "oga", "m4a", "mp4", "mp3", "mpga", "wav", "flac"];
+
+const parseAllowedAudioTypes = (): string[] => {
+  const raw = process.env.NEXT_PUBLIC_ALLOWED_AUDIO_TYPES;
+  if (!raw) {
+    return DEFAULT_ALLOWED_AUDIO_TYPES;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => (typeof item === "string" ? item.toLowerCase() : null))
+        .filter((item): item is string => Boolean(item));
+    }
+  } catch (err) {
+    console.warn("Failed to parse NEXT_PUBLIC_ALLOWED_AUDIO_TYPES:", err);
+  }
+  return DEFAULT_ALLOWED_AUDIO_TYPES;
+};
+
+const ALLOWED_AUDIO_TYPES = new Set(parseAllowedAudioTypes());
+const ALLOWED_AUDIO_EXTENSIONS = new Set<string>(DEFAULT_ALLOWED_EXTENSIONS);
+const ACCEPT_ATTRIBUTE = Array.from(
+  new Set([
+    ...ALLOWED_AUDIO_TYPES,
+    ...Array.from(ALLOWED_AUDIO_EXTENSIONS).map((ext) => `.${ext}`),
+  ]),
+).join(",");
+
+const UNSUPPORTED_AUDIO_MESSAGE = `Unsupported audio format. Supported formats: ${SUPPORTED_FORMATS_LABEL.join(
+  ", ",
+)}`;
+
+const getFileExtension = (fileName: string | undefined | null): string | null => {
+  if (!fileName || !fileName.includes(".")) return null;
+  const [, ext] = /.+\.([^.]+)$/.exec(fileName) ?? [];
+  return ext ? ext.toLowerCase() : null;
+};
+
+const isAllowedAudioFile = (file: File): boolean => {
+  const type = (file.type ?? "").toLowerCase();
+  if (
+    type &&
+    (type.startsWith("audio/") || type.startsWith("video/") || type === "application/ogg") &&
+    ALLOWED_AUDIO_TYPES.has(type)
+  ) {
+    return true;
+  }
+
+  const extension = getFileExtension(file.name);
+  if (extension && ALLOWED_AUDIO_EXTENSIONS.has(extension)) {
+    return true;
+  }
+
+  return false;
+};
 
 export default function Home() {
   const [token, setToken] = useState("");
@@ -34,6 +121,7 @@ export default function Home() {
   const [voiceConfidence, setVoiceConfidence] = useState<number | null>(null);
   const [voiceTranscription, setVoiceTranscription] = useState<string>("");
   const [voiceMetrics, setVoiceMetrics] = useState<VoiceMetrics | null>(null);
+  const [voiceError, setVoiceError] = useState<string>("");
   const [supportsMediaRecorder, setSupportsMediaRecorder] = useState<boolean>(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -163,6 +251,7 @@ export default function Home() {
       setVoiceConfidence(null);
       setVoiceMetrics(null);
       setError("");
+      setVoiceError("");
 
       clearRecordingTimer();
       if (VOICE_MAX_DURATION > 0) {
@@ -186,6 +275,7 @@ export default function Home() {
     clearRecordingTimer();
     setIsRecording(false);
     setIsVoiceProcessing(true);
+    setVoiceError("");
     setVoiceStatus("Processing audio...");
     mediaRecorderRef.current.stop();
     stopStream();
@@ -214,10 +304,19 @@ export default function Home() {
   const handleVoiceFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (!isAllowedAudioFile(file)) {
+      setVoiceStatus(UNSUPPORTED_AUDIO_MESSAGE);
+      setError(UNSUPPORTED_AUDIO_MESSAGE);
+      setVoiceError(UNSUPPORTED_AUDIO_MESSAGE);
+      setVoiceTranscription("");
+      setVoiceDetectedLang(null);
+      setVoiceConfidence(null);
+      setVoiceMetrics(null);
+      event.target.value = "";
+      return;
+    }
     setIsVoiceProcessing(true);
-    setVoiceStatus("Uploading audio...");
     try {
-      await ensureTokenOrError();
       await submitVoiceFile(file);
     } finally {
       event.target.value = "";
@@ -226,12 +325,25 @@ export default function Home() {
   };
 
   const submitVoiceFile = async (file: File) => {
+    if (!isAllowedAudioFile(file)) {
+      setVoiceStatus(UNSUPPORTED_AUDIO_MESSAGE);
+      setError(UNSUPPORTED_AUDIO_MESSAGE);
+      setVoiceError(UNSUPPORTED_AUDIO_MESSAGE);
+      setVoiceTranscription("");
+      setVoiceDetectedLang(null);
+      setVoiceConfidence(null);
+      setVoiceMetrics(null);
+      return;
+    }
+
     try {
       const currentToken = await ensureTokenOrError();
+      setVoiceStatus("Uploading audio...");
       const response: VoiceTranslationResponse = await voiceTranslate(file, currentToken, [targetLang]);
 
       const lowConfidence = typeof response.confidence === "number" && response.confidence < CONFIDENCE_THRESHOLD;
       setVoiceStatus(lowConfidence ? "Voice translation ready (low confidence detection)" : "Voice translation ready");
+      setVoiceError("");
       setVoiceDetectedLang(response.detected_lang ?? "unknown");
       setVoiceConfidence(response.confidence ?? null);
       setVoiceTranscription(response.transcription);
@@ -251,6 +363,7 @@ export default function Home() {
       console.error(err);
       setError(err instanceof Error ? err.message : "Voice translation failed");
       setVoiceStatus("Voice translation failed");
+      setVoiceError(err instanceof Error ? err.message : "Voice translation failed");
       setVoiceTranscription("");
       setVoiceDetectedLang(null);
       setVoiceConfidence(null);
@@ -325,7 +438,7 @@ export default function Home() {
         <section className="bg-white rounded-lg shadow p-6 space-y-4">
           <h2 className="text-lg font-semibold">Voice Translation</h2>
           <p className="text-sm text-gray-600">
-            Record up to {VOICE_MAX_DURATION} seconds of audio (webm/ogg/mp3/wav) and we will detect the language automatically.
+            Record up to {VOICE_MAX_DURATION} seconds of audio (webm/ogg/m4a/mp3/wav/flac) and we will detect the language automatically.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3">
@@ -345,10 +458,15 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500" data-testid="voice-status">
             {voiceStatus}
             {isVoiceProcessing && <span className="ml-2 text-purple-600">Processing...</span>}
           </div>
+          {voiceError && (
+            <div className="text-sm text-red-600" data-testid="voice-error">
+              {voiceError}
+            </div>
+          )}
 
           <div className="text-sm text-gray-600">
             <label className="block font-medium mb-1" htmlFor="voice-upload">
@@ -358,7 +476,7 @@ export default function Home() {
               id="voice-upload"
               name="voice-upload"
               type="file"
-              accept="audio/webm,audio/ogg,audio/mpeg,audio/wav"
+              accept={ACCEPT_ATTRIBUTE}
               onChange={handleVoiceFileUpload}
               className="w-full text-sm"
             />

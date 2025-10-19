@@ -163,6 +163,31 @@ describe("Home page", () => {
     expect(consoleErrorSpy).toHaveBeenCalled();
   });
 
+  it("rejects unsupported audio format before upload", async () => {
+    mockGetAuthToken.mockResolvedValue("token-voice");
+
+    render(<Home />);
+
+    await act(async () => {
+      await userEvent.click(screen.getByRole("button", { name: /get auth token/i }));
+    });
+
+    const fileInput = screen.getByLabelText(/upload audio file/i);
+    const file = new File([new Uint8Array([9, 9, 9])], "note.pdf", {
+      type: "application/pdf",
+    });
+
+    fileInput.setAttribute("accept", "");
+    await act(async () => {
+      await userEvent.upload(fileInput, file);
+    });
+
+    await waitFor(() => {
+      expect(mockVoiceTranslate).not.toHaveBeenCalled();
+    });
+    expect(await screen.findByTestId("voice-error")).toHaveTextContent(/unsupported audio format/i);
+  });
+
   it("records audio via MediaRecorder and sends chunk", async () => {
     const originalMediaRecorder = (globalThis as any).MediaRecorder;
     const originalMediaDevices = navigator.mediaDevices;
