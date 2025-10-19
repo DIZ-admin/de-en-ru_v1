@@ -43,6 +43,20 @@ class Settings(BaseSettings):
     max_text_length: int = 4000
     translation_cache_ttl: int = 600  # 10 минут
 
+    # Voice translation settings
+    voice_enabled: bool = True
+    voice_allowed_mime_types: list[str] = [
+        "audio/webm",
+        "audio/ogg",
+        "audio/mpeg",
+        "audio/wav",
+    ]
+    voice_max_duration_seconds: int = 60
+    voice_max_file_size_mb: int = 5
+    voice_transcription_model: str = "gpt-4o-mini-transcribe"
+    voice_detection_confidence_threshold: float = 0.7
+    voice_default_target_langs: list[str] = ["ru", "en", "de"]
+
     # OpenAI retry strategy
     openai_retry_max_attempts: int = 3
     openai_retry_initial_delay: float = 0.5
@@ -109,6 +123,32 @@ class Settings(BaseSettings):
             return [str(item).strip() for item in value if str(item).strip()]
         raise TypeError(
             "jwt_additional_public_keys must be a string or iterable of strings"
+        )
+
+    @field_validator("voice_allowed_mime_types", mode="before")
+    @classmethod
+    def _split_voice_mimes(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        raise TypeError(
+            "voice_allowed_mime_types must be a string or iterable of strings"
+        )
+
+    @field_validator("voice_default_target_langs", mode="before")
+    @classmethod
+    def _split_voice_targets(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        raise TypeError(
+            "voice_default_target_langs must be a string or iterable of strings"
         )
 
 

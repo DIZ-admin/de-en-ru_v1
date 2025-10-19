@@ -106,7 +106,9 @@ export default function Home() {
             </label>
             <select
               value={targetLang}
-              onChange={(e) => setTargetLang(e.target.value as any)}
+              onChange={(e) =>
+                setTargetLang(e.target.value as "ru" | "en" | "de")
+              }
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={!token}
             >

@@ -5,9 +5,14 @@ FastAPI application - OpenAI-First approach.
 
 from collections.abc import AsyncIterator
 import logging
+import mimetypes
+import os
+import tempfile
+import time
 from contextlib import asynccontextmanager
+from typing import cast
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, make_asgi_app
@@ -21,8 +26,13 @@ from .translate import (
     OpenAIRetryExceeded,
     TranslationRequest,
     TranslationResponse,
+    Language,
     translate_text_stream,
     translate_with_cache,
+    transcribe_audio_file,
+    translate_voice_text,
+    VoiceTranslationMetadata,
+    VoiceTranslationResponsePayload,
 )
 
 
@@ -40,6 +50,25 @@ translation_counter = Counter(
 latency_histogram = Histogram(
     "translation_latency_seconds",
     "Translation latency",
+)
+
+voice_request_counter = Counter(
+    "voice_requests_total",
+    "Total voice translation requests",
+    ["status"],
+)
+voice_detected_counter = Counter(
+    "voice_detected_language_total",
+    "Detected languages for voice input",
+    ["lang"],
+)
+voice_transcription_latency = Histogram(
+    "voice_transcription_latency_seconds",
+    "Voice transcription latency",
+)
+voice_translation_latency = Histogram(
+    "voice_translation_latency_seconds",
+    "Voice translation latency",
 )
 
 
@@ -237,6 +266,120 @@ async def translate_stream(
     )
 
 
+# ============= Voice Translation =============
+
+
+@app.post("/voice-translate", response_model=VoiceTranslationResponsePayload)
+async def voice_translate(
+    file: UploadFile = File(...),
+    target_langs: str | None = Form(None),
+    user_id: str = Depends(verify_token),
+) -> VoiceTranslationResponsePayload:
+    if not settings.voice_enabled:
+        raise HTTPException(status_code=503, detail="Voice translation disabled")
+
+    await check_rate_limit(user_id)
+    voice_request_counter.labels(status="requested").inc()
+
+    if file.content_type not in settings.voice_allowed_mime_types:
+        voice_request_counter.labels(status="unsupported_media").inc()
+        raise HTTPException(status_code=415, detail="Unsupported audio content type")
+
+    data = await file.read()
+    if not data:
+        voice_request_counter.labels(status="error").inc()
+        raise HTTPException(status_code=400, detail="Audio payload is empty")
+
+    max_bytes = settings.voice_max_file_size_mb * 1024 * 1024
+    if len(data) > max_bytes:
+        voice_request_counter.labels(status="too_large").inc()
+        raise HTTPException(status_code=413, detail="Audio payload too large")
+
+    suffix = mimetypes.guess_extension(file.content_type or "") or ".tmp"
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    try:
+        temp_file.write(data)
+        temp_file.flush()
+        temp_file.close()
+
+        transcription_start = time.perf_counter()
+        try:
+            transcription = await transcribe_audio_file(temp_file.name)
+        except OpenAIRetryExceeded as exc:
+            voice_request_counter.labels(status="api_error").inc()
+            raise HTTPException(
+                status_code=502, detail="Transcription service temporarily unavailable"
+            ) from exc
+        except Exception as exc:
+            voice_request_counter.labels(status="error").inc()
+            logger.exception("Voice transcription failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to transcribe audio") from exc
+
+        transcription_latency_ms = (time.perf_counter() - transcription_start) * 1000
+        voice_transcription_latency.observe(transcription_latency_ms / 1000)
+
+        desired_targets = (
+            [lang.strip().lower() for lang in target_langs.split(",") if lang.strip()]
+            if target_langs
+            else settings.voice_default_target_langs
+        )
+
+        validated_targets: list[Language] = []
+        for lang in desired_targets:
+            if lang not in {"ru", "en", "de"}:
+                voice_request_counter.labels(status="error").inc()
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported target language '{lang}'",
+                )
+            validated_targets.append(cast(Language, lang))
+
+        translation_start = time.perf_counter()
+        try:
+            translations, reported_lang, applied_source = await translate_voice_text(
+                transcription.text,
+                transcription.language,
+                transcription.confidence,
+                validated_targets,
+            )
+        except OpenAIRetryExceeded as exc:
+            voice_request_counter.labels(status="api_error").inc()
+            raise HTTPException(
+                status_code=502,
+                detail="Translation service temporarily unavailable",
+            ) from exc
+        except HTTPException:
+            voice_request_counter.labels(status="error").inc()
+            raise
+        except Exception as exc:
+            voice_request_counter.labels(status="error").inc()
+            logger.exception("Voice translation failed: %s", exc)
+            raise HTTPException(status_code=500, detail="Voice translation failed") from exc
+
+        translation_latency_ms = (time.perf_counter() - translation_start) * 1000
+        voice_translation_latency.observe(translation_latency_ms / 1000)
+
+        voice_detected_counter.labels(lang=reported_lang).inc()
+        voice_request_counter.labels(status="success").inc()
+
+        metadata = VoiceTranslationMetadata(
+            audio_duration_s=transcription.duration_s,
+            transcription_latency_ms=transcription_latency_ms,
+            translation_latency_ms=translation_latency_ms,
+        )
+
+        return VoiceTranslationResponsePayload(
+            transcription=transcription.text,
+            detected_lang=reported_lang if reported_lang != "unknown" else None,
+            confidence=transcription.confidence,
+            translations=translations,
+            metadata=metadata,
+        )
+    finally:
+        try:
+            os.unlink(temp_file.name)
+        except FileNotFoundError:
+            pass
 # ============= Realtime API (для голоса) =============
 
 

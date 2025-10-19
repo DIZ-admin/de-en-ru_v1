@@ -1,0 +1,14 @@
+node_modules
+.next
+dist
+build
+coverage
+.git
+.vscode
+.idea
+*.lock
+*.log
+.env
+.env.local
+.env.*.local
+

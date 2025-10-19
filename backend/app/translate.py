@@ -10,7 +10,7 @@ import hashlib
 import logging
 import random
 import time
-from typing import Any, AsyncIterator, Awaitable, Callable, Literal, TypeVar, cast
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Literal, NamedTuple, TypeVar, cast
 
 from openai import APIError, AsyncOpenAI, RateLimitError
 from openai.types.responses import Response, ResponseInputParam
@@ -36,6 +36,27 @@ cache_miss_counter = Counter(
     "translation_cache_misses_total",
     "Number of translation cache misses",
 )
+
+
+class VoiceTranscriptionResult(NamedTuple):
+    text: str
+    language: str | None
+    confidence: float | None
+    duration_s: float | None
+
+
+class VoiceTranslationMetadata(BaseModel):
+    audio_duration_s: float | None = None
+    transcription_latency_ms: float
+    translation_latency_ms: float
+
+
+class VoiceTranslationResponsePayload(BaseModel):
+    transcription: str
+    detected_lang: str | None = None
+    confidence: float | None = None
+    translations: Dict[str, str]
+    metadata: VoiceTranslationMetadata
 
 
 # Language types
@@ -308,3 +329,104 @@ async def translate_with_cache(request: TranslationRequest) -> TranslationRespon
         _translation_cache[cache_key] = (response.translated_text, expires_at)
 
     return response
+
+
+def _get_attr(data: Any, key: str) -> Any:
+    if isinstance(data, dict) and key in data:
+        return data[key]
+    return getattr(data, key, None)
+
+
+async def transcribe_audio_file(path: str) -> VoiceTranscriptionResult:
+    async def invoke() -> Any:
+        with open(path, "rb") as audio_file:
+            return await client.audio.transcriptions.create(
+                model=settings.voice_transcription_model,
+                file=audio_file,
+                response_format="verbose_json",
+            )
+
+    result = await _call_with_retry(
+        invoke,
+        operation="audio.transcriptions.create",
+    )
+
+    text = _get_attr(result, "text")
+    if not text or not isinstance(text, str):
+        raise ValueError("Transcription did not return text")
+
+    language = _get_attr(result, "language")
+    if isinstance(language, str):
+        language = language.lower()
+    else:
+        language = None
+
+    confidence = _get_attr(result, "language_probability")
+    if isinstance(confidence, (int, float)):
+        confidence = float(confidence)
+    else:
+        confidence = None
+
+    duration = _get_attr(result, "duration")
+    if isinstance(duration, (int, float)):
+        duration = float(duration)
+    else:
+        duration = None
+
+    return VoiceTranscriptionResult(
+        text=text,
+        language=language,
+        confidence=confidence,
+        duration_s=duration,
+    )
+
+
+async def translate_voice_text(
+    transcription: str,
+    detected_lang: str | None,
+    confidence: float | None,
+    target_langs: list[Language],
+) -> tuple[dict[str, str], str, str]:
+    normalized_lang = None
+    if detected_lang and detected_lang.lower() in {"ru", "en", "de"}:
+        normalized_lang = detected_lang.lower()
+
+    use_detected = False
+    if normalized_lang:
+        if confidence is None:
+            use_detected = True
+        else:
+            use_detected = confidence >= settings.voice_detection_confidence_threshold
+
+    source_lang: Literal["auto"] | Language
+    if use_detected:
+        source_lang = cast(Language, normalized_lang)
+        reported_lang = normalized_lang
+    else:
+        source_lang = "auto"
+        reported_lang = normalized_lang or "unknown"
+
+    translations: dict[str, str] = {}
+
+    async def _translate(lang: Language) -> tuple[Language, str]:
+        if use_detected and lang == source_lang:
+            return lang, transcription
+        response = await translate_with_cache(
+            TranslationRequest(
+                text=transcription,
+                source_lang=source_lang,
+                target_lang=lang,
+            )
+        )
+        return lang, response.translated_text
+
+    tasks = [_translate(lang) for lang in target_langs]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for result in results:
+        if isinstance(result, Exception):
+            raise result
+        lang, translated = result
+        translations[lang] = translated
+
+    return translations, reported_lang, source_lang if use_detected else "auto"
