@@ -1,0 +1,45 @@
+groups:
+  - name: translator-alerts
+    interval: 30s
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend is unreachable"
+          description: "Prometheus cannot scrape the FastAPI metrics endpoint for 1 minute."
+
+      - alert: HighTranslationLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(translation_latency_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High translation latency (95th percentile > 2s)"
+          description: "Investigate OpenAI latency or system load."
+
+      - alert: ElevatedErrorRate
+        expr: |
+          sum(rate(translations_total{status="error"}[5m])) /
+          sum(rate(translations_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Translation error ratio above 5% over 5 minutes"
+          description: "Check OpenAI API responses and backend logs."
+
+      - alert: RateLimitSpike
+        expr: sum(rate(rate_limit_blocked_total[5m])) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rate limit rejections observed"
+          description: "Users are hitting rate limits frequently. Consider capacity or tuning."
