@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import pytest
 import jwt
@@ -24,7 +23,7 @@ def reset_rate_limits(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture()
-def rsa_keys() -> Tuple[str, str]:
+def rsa_keys() -> tuple[str, str]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -64,7 +63,7 @@ async def test_check_rate_limit_in_memory(monkeypatch: pytest.MonkeyPatch):
 
 class _FakeRedisLimiter:
     def __init__(self):
-        self.store: Dict[str, List[float]] = {}
+        self.store: dict[str, list[float]] = {}
 
     async def zremrangebyscore(self, key: str, min_score: str, max_score: float):
         values = self.store.get(key, [])
@@ -73,7 +72,7 @@ class _FakeRedisLimiter:
     async def zcard(self, key: str) -> int:
         return len(self.store.get(key, []))
 
-    async def zadd(self, key: str, mapping: Dict[float, float]):
+    async def zadd(self, key: str, mapping: dict[float, float]):
         values = self.store.setdefault(key, [])
         values.extend(mapping.values())
 
@@ -145,7 +144,7 @@ def test_create_access_token_rs256_requires_private_key(
 
 def test_create_access_token_rs256_with_inline_key(
     monkeypatch: pytest.MonkeyPatch,
-    rsa_keys: Tuple[str, str],
+    rsa_keys: tuple[str, str],
     clear_jwt_caches: None,
 ):
     private_key, public_key = rsa_keys
@@ -183,7 +182,7 @@ def test_verify_token_hs256_invalid_signature(
 
 def test_verify_token_rs256_with_additional_keys(
     monkeypatch: pytest.MonkeyPatch,
-    rsa_keys: Tuple[str, str],
+    rsa_keys: tuple[str, str],
     clear_jwt_caches: None,
 ):
     private_key, public_key = rsa_keys
@@ -207,7 +206,7 @@ def test_verify_token_rs256_with_additional_keys(
 
 def test_verify_token_rs256_without_keys(
     monkeypatch: pytest.MonkeyPatch,
-    rsa_keys: Tuple[str, str],
+    rsa_keys: tuple[str, str],
     clear_jwt_caches: None,
 ):
     private_key, _ = rsa_keys

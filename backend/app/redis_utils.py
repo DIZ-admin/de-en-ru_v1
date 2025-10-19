@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Optional, cast
+from typing import cast
 
 from redis.asyncio import Redis
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache()
-def _create_redis_client() -> Optional[Redis]:
+def _create_redis_client() -> Redis | None:
     """Create a Redis client if Redis is enabled."""
     settings = get_settings()
     if not settings.redis_enabled:
@@ -39,6 +39,6 @@ def _create_redis_client() -> Optional[Redis]:
     return cast(Redis, client)
 
 
-def get_redis_client() -> Optional[Redis]:
+def get_redis_client() -> Redis | None:
     """Return cached Redis client or None when disabled."""
     return _create_redis_client()

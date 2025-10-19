@@ -56,6 +56,30 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+ignore_missing_imports = false
+follow_imports = "normal"
+follow_imports_for_stubs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pytest.*",
+    "httpx.*",
+    "openai.*",
+    "fastapi.*",
+    "starlette.*",
+    "pydantic.*",
+    "prometheus_client.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
 
 [build-system]
 requires = ["poetry-core"]

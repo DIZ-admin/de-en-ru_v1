@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from time import time
-from typing import Iterable, List, Tuple
+from typing import Iterable
 
 import jwt
 from fastapi import HTTPException, Security
@@ -72,8 +72,8 @@ def _get_public_key() -> str | None:
 
 
 @lru_cache()
-def _get_additional_public_keys() -> Tuple[str, ...]:
-    keys: List[str] = []
+def _get_additional_public_keys() -> tuple[str, ...]:
+    keys: list[str] = []
     for path in settings.jwt_additional_public_keys_paths:
         data = _load_data_from_path(path)
         if data:
@@ -137,18 +137,21 @@ def create_access_token(user_id: str) -> dict[str, str | int]:
             )
 
         headers = {"kid": settings.jwt_kid} if settings.jwt_kid else None
-        token = jwt.encode(
+        token_result = jwt.encode(
             payload,
             private_key,
             algorithm=algorithm,
             headers=headers,
         )
     else:
-        token = jwt.encode(
+        token_result = jwt.encode(
             payload,
             settings.jwt_secret_key,
             algorithm=algorithm,
         )
+
+    # Ensure token is a string (jwt.encode can return str or bytes)
+    token = token_result if isinstance(token_result, str) else token_result.decode()
 
     return {
         "access_token": token,

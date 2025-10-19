@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, List
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -22,7 +22,7 @@ def reset_cache(monkeypatch: pytest.MonkeyPatch):
 
 
 class _FakeStreamIterator:
-    def __init__(self, events: List[Any]):
+    def __init__(self, events: list[Any]):
         self._events = events
 
     def __aiter__(self):
@@ -35,7 +35,7 @@ class _FakeStreamIterator:
 
 
 class _FakeStreamContext:
-    def __init__(self, events: List[Any]):
+    def __init__(self, events: list[Any]):
         self._events = events
 
     async def __aenter__(self):
