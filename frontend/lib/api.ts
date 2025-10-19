@@ -18,6 +18,18 @@ export interface TranslationResponse {
   model: string;
 }
 
+export interface VoiceTranslationResponse {
+  transcription: string;
+  detected_lang: string | null;
+  confidence: number | null;
+  translations: Record<string, string>;
+  metadata: {
+    audio_duration_s: number | null;
+    transcription_latency_ms: number;
+    translation_latency_ms: number;
+  };
+}
+
 /**
  * Get JWT token from backend
  */
@@ -32,6 +44,39 @@ export async function getAuthToken(userId: string = "demo-user"): Promise<string
 
   const data = await response.json();
   return data.access_token;
+}
+
+export async function voiceTranslate(
+  file: File,
+  token: string,
+  targetLangs?: string[],
+): Promise<VoiceTranslationResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (targetLangs && targetLangs.length > 0) {
+    formData.append("target_langs", targetLangs.join(","));
+  }
+
+  const response = await fetch(`${API_URL}/voice-translate`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    try {
+      const error = await response.json();
+      detail = error?.detail;
+    } catch (err) {
+      detail = undefined;
+    }
+    throw new Error(detail || "Voice translation failed");
+  }
+
+  return response.json();
 }
 
 /**

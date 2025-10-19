@@ -39,6 +39,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_BACKEND }}:staging
             ${{ env.REGISTRY }}/${{ env.IMAGE_BACKEND }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Build & push frontend (staging)
         uses: docker/build-push-action@v6
         with:
@@ -47,6 +49,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_FRONTEND }}:staging
             ${{ env.REGISTRY }}/${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
       - name: Deployment placeholder
         run: |
           echo "Deploy staging images via infrastructure-as-code here."
