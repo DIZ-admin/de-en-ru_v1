@@ -212,16 +212,19 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Security(security))
 _rate_limits: dict[str, list[float]] = defaultdict(list)
 
 
-async def check_rate_limit(user_id: str) -> None:
+async def check_rate_limit(user_id: str, weight: int = 1) -> None:
     """
     Check if user exceeded rate limit.
 
     Args:
         user_id: User identifier
+        weight: How many slots this request should consume
 
     Raises:
         HTTPException: If rate limit exceeded
     """
+    weight = max(1, int(weight))
+
     redis_client = get_redis_client()
     window = settings.rate_limit_window_seconds
     limit = settings.rate_limit_max_calls
@@ -235,13 +238,16 @@ async def check_rate_limit(user_id: str) -> None:
             await redis_client.zremrangebyscore(key, "-inf", window_start)
             current = await redis_client.zcard(key)
 
-            if current >= limit:
+            if current + weight > limit:
                 rate_limit_block_counter.inc()
                 raise HTTPException(
                     status_code=429, detail="Rate limit exceeded. Try again later."
                 )
 
-            await redis_client.zadd(key, {str(now): now})
+            members = {
+                f"{now}:{index}": now + index * 1e-6 for index in range(weight)
+            }
+            await redis_client.zadd(key, members)
             await redis_client.expire(key, window)
             return
         except RedisError as exc:
@@ -256,11 +262,12 @@ async def check_rate_limit(user_id: str) -> None:
     _rate_limits[user_id] = [t for t in _rate_limits[user_id] if t > window_start]
 
     # Check limit
-    if len(_rate_limits[user_id]) >= limit:
+    if len(_rate_limits[user_id]) + weight > limit:
         rate_limit_block_counter.inc()
         raise HTTPException(
             status_code=429, detail="Rate limit exceeded. Try again later."
         )
 
     # Add current request
-    _rate_limits[user_id].append(now)
+    for index in range(weight):
+        _rate_limits[user_id].append(now + index * 1e-6)

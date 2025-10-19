@@ -337,48 +337,83 @@ def _get_attr(data: Any, key: str) -> Any:
     return getattr(data, key, None)
 
 
-async def transcribe_audio_file(path: str) -> VoiceTranscriptionResult:
+async def _transcribe_with_model(path: str, model: str) -> Any:
     async def invoke() -> Any:
         with open(path, "rb") as audio_file:
             return await client.audio.transcriptions.create(
-                model=settings.voice_transcription_model,
+                model=model,
                 file=audio_file,
                 response_format="verbose_json",
             )
 
-    result = await _call_with_retry(
+    return await _call_with_retry(
         invoke,
         operation="audio.transcriptions.create",
+        context={"model": model},
     )
 
-    text = _get_attr(result, "text")
-    if not text or not isinstance(text, str):
-        raise ValueError("Transcription did not return text")
 
-    language = _get_attr(result, "language")
-    if isinstance(language, str):
-        language = language.lower()
-    else:
-        language = None
+async def transcribe_audio_file(path: str) -> VoiceTranscriptionResult:
+    primary_model = settings.voice_transcription_model
+    fallback_model = settings.voice_transcription_fallback_model
 
-    confidence = _get_attr(result, "language_probability")
-    if isinstance(confidence, (int, float)):
-        confidence = float(confidence)
-    else:
-        confidence = None
+    models_to_try: list[str] = []
+    if primary_model:
+        models_to_try.append(primary_model)
+    if fallback_model and fallback_model not in models_to_try:
+        models_to_try.append(fallback_model)
 
-    duration = _get_attr(result, "duration")
-    if isinstance(duration, (int, float)):
-        duration = float(duration)
-    else:
-        duration = None
+    last_exception: OpenAIRetryExceeded | None = None
 
-    return VoiceTranscriptionResult(
-        text=text,
-        language=language,
-        confidence=confidence,
-        duration_s=duration,
-    )
+    for index, model_name in enumerate(models_to_try):
+        try:
+            result = await _transcribe_with_model(path, model_name)
+        except OpenAIRetryExceeded as exc:
+            last_exception = exc
+            original = getattr(exc, "original", None)
+            logger.warning(
+                "Transcription with model %s failed (reason=%s, status=%s, message=%s)",
+                model_name,
+                exc.reason,
+                getattr(original, "status_code", None),
+                getattr(original, "message", str(exc)),
+            )
+            is_last_model = index == len(models_to_try) - 1
+            if is_last_model:
+                raise
+            continue
+        else:
+            text = _get_attr(result, "text")
+            if not text or not isinstance(text, str):
+                raise ValueError("Transcription did not return text")
+
+            language = _get_attr(result, "language")
+            if isinstance(language, str):
+                language = language.lower()
+            else:
+                language = None
+
+            confidence = _get_attr(result, "language_probability")
+            if isinstance(confidence, (int, float)):
+                confidence = float(confidence)
+            else:
+                confidence = None
+
+            duration = _get_attr(result, "duration")
+            if isinstance(duration, (int, float)):
+                duration = float(duration)
+            else:
+                duration = None
+
+            return VoiceTranscriptionResult(
+                text=text,
+                language=language,
+                confidence=confidence,
+                duration_s=duration,
+            )
+
+    assert last_exception is not None  # For mypy
+    raise last_exception
 
 
 async def translate_voice_text(

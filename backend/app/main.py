@@ -142,7 +142,7 @@ async def translate(
         Translation response
     """
     # Rate limiting
-    await check_rate_limit(user_id, weight=settings.voice_rate_limit_weight)
+    await check_rate_limit(user_id)
 
     # Metrics
     translation_counter.labels(
@@ -210,7 +210,7 @@ async def translate_stream(
         Server-Sent Events stream
     """
     # Rate limiting
-    await check_rate_limit(user_id, weight=settings.voice_rate_limit_weight)
+    await check_rate_limit(user_id)
 
     translation_counter.labels(
         target_lang=request.target_lang,
@@ -306,7 +306,34 @@ async def voice_translate(
         try:
             transcription = await transcribe_audio_file(temp_file.name)
         except OpenAIRetryExceeded as exc:
-            voice_request_counter.labels(status="api_error").inc()
+            error_status = "api_error"
+            if exc.reason == "rate_limit":
+                voice_request_counter.labels(status="rate_limited").inc()
+                raise HTTPException(
+                    status_code=429, detail="Transcription rate limit exceeded"
+                ) from exc
+
+            original = getattr(exc, "original", None)
+            status_code = getattr(original, "status_code", None)
+            detail = getattr(original, "message", None)
+            if not detail and hasattr(original, "body"):
+                # OpenAI errors often embed message in body.error.message
+                detail = (
+                    getattr(getattr(original.body, "error", None), "message", None)
+                    if hasattr(original.body, "error")
+                    else None
+                )
+                if not detail and isinstance(original.body, dict):
+                    detail = original.body.get("error", {}).get("message")
+
+            if isinstance(status_code, int) and 400 <= status_code < 500:
+                voice_request_counter.labels(status=error_status).inc()
+                raise HTTPException(
+                    status_code=status_code,
+                    detail=detail or "Transcription request failed",
+                ) from exc
+
+            voice_request_counter.labels(status=error_status).inc()
             raise HTTPException(
                 status_code=502, detail="Transcription service temporarily unavailable"
             ) from exc

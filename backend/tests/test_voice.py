@@ -5,7 +5,13 @@ from fastapi.testclient import TestClient
 
 from app.auth import verify_token
 from app.main import app, settings
-from app.translate import TranslationResponse, translate_voice_text
+from app.translate import (
+    OpenAIRetryExceeded,
+    TranslationResponse,
+    VoiceTranscriptionResult,
+    translate_voice_text,
+    transcribe_audio_file,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +83,66 @@ def test_voice_translate_invalid_media(monkeypatch):
     assert response.status_code == 415
 
 
+def test_voice_translate_transcription_rate_limit(monkeypatch):
+    app.dependency_overrides[verify_token] = lambda: "user-1"
+
+    async def fake_check_rate_limit(*_args, **_kwargs):
+        return None
+
+    class DummyRateLimitError(Exception):
+        status_code = 429
+        message = "Too many requests"
+
+    async def fake_transcribe(_path: str):
+        raise OpenAIRetryExceeded("rate_limit", DummyRateLimitError())
+
+    monkeypatch.setattr("app.main.check_rate_limit", fake_check_rate_limit)
+    monkeypatch.setattr("app.main.transcribe_audio_file", fake_transcribe)
+    monkeypatch.setattr("app.translate.transcribe_audio_file", fake_transcribe)
+
+    client = TestClient(app)
+    files = {"file": ("sample.webm", b"123", "audio/webm")}
+
+    response = client.post(
+        "/voice-translate",
+        files=files,
+        headers={"Authorization": "Bearer token"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Transcription rate limit exceeded"
+
+
+def test_voice_translate_transcription_client_error(monkeypatch):
+    app.dependency_overrides[verify_token] = lambda: "user-1"
+
+    async def fake_check_rate_limit(*_args, **_kwargs):
+        return None
+
+    class DummyClientError(Exception):
+        status_code = 400
+        message = "Audio format malformed"
+
+    async def fake_transcribe(_path: str):
+        raise OpenAIRetryExceeded("api_error", DummyClientError())
+
+    monkeypatch.setattr("app.main.check_rate_limit", fake_check_rate_limit)
+    monkeypatch.setattr("app.main.transcribe_audio_file", fake_transcribe)
+    monkeypatch.setattr("app.translate.transcribe_audio_file", fake_transcribe)
+
+    client = TestClient(app)
+    files = {"file": ("sample.webm", b"123", "audio/webm")}
+
+    response = client.post(
+        "/voice-translate",
+        files=files,
+        headers={"Authorization": "Bearer token"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Audio format malformed"
+
+
 @pytest.mark.asyncio
 async def test_translate_voice_low_confidence(monkeypatch):
     async def fake_translate(request):
@@ -98,3 +164,43 @@ async def test_translate_voice_low_confidence(monkeypatch):
     assert translations["de"] == "auto-translated"
     assert reported_lang == "en"
     assert applied_source == "auto"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_audio_file_fallback(monkeypatch, tmp_path):
+    primary_model = "gpt-4o-mini-transcribe"
+    fallback_model = "whisper-1"
+
+    monkeypatch.setattr("app.translate.settings.voice_transcription_model", primary_model)
+    monkeypatch.setattr(
+        "app.translate.settings.voice_transcription_fallback_model", fallback_model
+    )
+
+    class DummyApiError(Exception):
+        status_code = 404
+        message = "Model not found"
+
+    calls: list[str] = []
+
+    async def fake_call_with_retry(func, *, operation, context=None):
+        model = context.get("model") if context else None
+        calls.append(model)
+        if len(calls) == 1:
+            raise OpenAIRetryExceeded("api_error", DummyApiError())
+        return {
+            "text": "Hello world",
+            "language": "en",
+            "language_probability": 0.9,
+            "duration": 1.23,
+        }
+
+    monkeypatch.setattr("app.translate._call_with_retry", fake_call_with_retry)
+
+    audio_path = tmp_path / "sample.webm"
+    audio_path.write_bytes(b"voice-bytes")
+
+    result: VoiceTranscriptionResult = await transcribe_audio_file(str(audio_path))
+
+    assert result.text == "Hello world"
+    assert result.language == "en"
+    assert calls == [primary_model, fallback_model]

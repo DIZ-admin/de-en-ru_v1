@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     voice_max_duration_seconds: int = 60
     voice_max_file_size_mb: int = 5
     voice_transcription_model: str = "gpt-4o-mini-transcribe"
+    voice_transcription_fallback_model: str | None = "whisper-1"
     voice_detection_confidence_threshold: float = 0.7
     voice_default_target_langs: list[str] = ["ru", "en", "de"]
     voice_rate_limit_weight: int = 3
