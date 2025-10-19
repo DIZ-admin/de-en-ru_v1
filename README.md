@@ -30,6 +30,7 @@ Real-Time Trilingual Translator — **минималистичная** сист�
 - ✅ **Prometheus метрики**
 - ✅ **Мониторинг** (Prometheus + Grafana) и алёрты по ключевым метрикам
 - ✅ **Security headers** (CSP, HSTS), RS256 и key rotation
+- 🗣️ **Планируется голосовой ввод** — архитектура автоопределения языка описана в [VOICE_INPUT_DESIGN.md](./VOICE_INPUT_DESIGN.md)
 
 ## 🚀 Быстрый старт
 
@@ -102,6 +103,7 @@ brew services start redis
 | [DEPLOYMENT.md](./DEPLOYMENT.md) | Инструкции по развертыванию |
 | [SECURITY.md](./SECURITY.md) | Документация по безопасности |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Рекомендации для контрибьюторов |
+| [VOICE_INPUT_DESIGN.md](./VOICE_INPUT_DESIGN.md) | Архитектура голосового ввода и автоопределения языка |
 
 ## 🏗️ Архитектура
 

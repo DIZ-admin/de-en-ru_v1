@@ -68,6 +68,13 @@ backend/
 - `redis` (опционально для rate limit)
 - `pydantic`
 - `prometheus-client`
+
+#### Voice Translation (новое)
+
+- `POST /voice-translate` (multipart/form-data) принимает аудио и отправляет его на OpenAI Whisper для транскрибации и определения языка.
+- После успешной транскрипции использует существующий `translate_with_cache` для генерации переводов.
+- Отдаёт JSON `{transcription, detected_lang, confidence, translations, metadata}`.
+- См. `VOICE_INPUT_DESIGN.md` для детального сценария и метрик.
 - `pyjwt`
 
 ### Frontend (Next.js)
