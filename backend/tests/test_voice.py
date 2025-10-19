@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,6 +82,55 @@ def test_voice_translate_invalid_media(monkeypatch):
         headers={"Authorization": "Bearer token"},
     )
     assert response.status_code == 415
+
+
+def test_voice_translate_accepts_m4a(monkeypatch):
+    app.dependency_overrides[verify_token] = lambda: "user-1"
+
+    async def fake_check_rate_limit(*_args, **_kwargs):
+        return None
+
+    async def fake_transcribe(path: str):
+        assert path.endswith(".m4a")
+        return SimpleNamespace(
+            text="Hi",
+            language="en",
+            confidence=0.9,
+            duration_s=1.0,
+        )
+
+    async def fake_translate(request):
+        return TranslationResponse(
+            translated_text=f"{request.target_lang}-translated",
+            detected_lang=request.source_lang if request.source_lang != "auto" else None,
+            model="gpt-4.1-nano",
+        )
+
+    suffixes: list[str | None] = []
+    real_named_tempfile = tempfile.NamedTemporaryFile
+
+    def fake_named_tempfile(*args, **kwargs):
+        suffixes.append(kwargs.get("suffix"))
+        return real_named_tempfile(*args, **kwargs)
+
+    monkeypatch.setattr("app.main.check_rate_limit", fake_check_rate_limit)
+    monkeypatch.setattr("app.main.transcribe_audio_file", fake_transcribe)
+    monkeypatch.setattr("app.translate.transcribe_audio_file", fake_transcribe)
+    monkeypatch.setattr("app.main.translate_with_cache", fake_translate)
+    monkeypatch.setattr("app.translate.translate_with_cache", fake_translate)
+    monkeypatch.setattr("app.main.tempfile.NamedTemporaryFile", fake_named_tempfile)
+
+    client = TestClient(app)
+    files = {"file": ("sample.m4a", b"123", "audio/mp4a-latm")}
+
+    response = client.post(
+        "/voice-translate",
+        files=files,
+        headers={"Authorization": "Bearer token"},
+    )
+
+    assert response.status_code == 200
+    assert suffixes and suffixes[-1] == ".m4a"
 
 
 def test_voice_translate_transcription_rate_limit(monkeypatch):

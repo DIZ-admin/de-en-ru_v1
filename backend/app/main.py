@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 import logging
 import mimetypes
 import os
+from pathlib import Path
 import tempfile
 import time
 from contextlib import asynccontextmanager
@@ -40,6 +41,25 @@ settings = get_settings()
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger(__name__)
 
+# Register additional audio mimetypes that are commonly reported by browsers
+_CUSTOM_AUDIO_MIMETYPES: dict[str, str] = {
+    "audio/mp4": ".m4a",
+    "audio/mp4a-latm": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "audio/x-wav": ".wav",
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+    "audio/oga": ".ogg",
+    "video/webm": ".webm",
+    "video/mp4": ".mp4",
+    "video/mpeg": ".mpeg",
+}
+
+for _mime, _ext in _CUSTOM_AUDIO_MIMETYPES.items():
+    mimetypes.add_type(_mime, _ext, strict=False)
+
+_ALLOWED_AUDIO_MIME_TYPES = {mime.lower() for mime in settings.voice_allowed_mime_types}
+
 
 # Prometheus metrics
 translation_counter = Counter(
@@ -70,6 +90,24 @@ voice_translation_latency = Histogram(
     "voice_translation_latency_seconds",
     "Voice translation latency",
 )
+
+
+def _resolve_audio_suffix(upload_file: UploadFile) -> str:
+    """Determine a safe file suffix for temporary audio files."""
+    content_type = (upload_file.content_type or "").lower()
+    suffix = None
+    if content_type:
+        suffix = mimetypes.guess_extension(content_type)
+        if not suffix and content_type in _CUSTOM_AUDIO_MIMETYPES:
+            suffix = _CUSTOM_AUDIO_MIMETYPES[content_type]
+
+    if not suffix and upload_file.filename:
+        suffix = Path(upload_file.filename).suffix.lower()
+
+    if suffix and suffix.startswith("."):
+        return suffix
+
+    raise HTTPException(status_code=415, detail="Unsupported audio content type")
 
 
 @asynccontextmanager
@@ -281,7 +319,8 @@ async def voice_translate(
     await check_rate_limit(user_id, weight=settings.voice_rate_limit_weight)
     voice_request_counter.labels(status="requested").inc()
 
-    if file.content_type not in settings.voice_allowed_mime_types:
+    content_type = (file.content_type or "").lower()
+    if content_type not in _ALLOWED_AUDIO_MIME_TYPES:
         voice_request_counter.labels(status="unsupported_media").inc()
         raise HTTPException(status_code=415, detail="Unsupported audio content type")
 
@@ -295,7 +334,7 @@ async def voice_translate(
         voice_request_counter.labels(status="too_large").inc()
         raise HTTPException(status_code=413, detail="Audio payload too large")
 
-    suffix = mimetypes.guess_extension(file.content_type or "") or ".tmp"
+    suffix = _resolve_audio_suffix(file)
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     try:
         temp_file.write(data)

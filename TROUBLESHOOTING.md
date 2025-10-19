@@ -229,7 +229,7 @@ RATE_LIMIT_WINDOW_SECONDS=60
 **Решение:**
 ```bash
 # Проверьте поддерживаемые форматы в backend/.env
-VOICE_ALLOWED_MIME_TYPES=["audio/webm","audio/ogg","audio/mpeg","audio/wav"]
+VOICE_ALLOWED_MIME_TYPES=["audio/webm","video/webm","audio/ogg","application/ogg","audio/oga","audio/mpeg","audio/mpga","audio/mp4","audio/mp4a-latm","audio/x-m4a","video/mp4","audio/wav","audio/x-wav","audio/flac","audio/x-flac","video/mpeg"]
 
 # Убедитесь, что файл имеет правильный MIME тип
 file -b --mime-type sample.webm
@@ -304,4 +304,3 @@ console.log(process.env)
 **Последнее обновление:** 19 октября 2025 г.
 
 Если проблема не решена, создайте issue на GitHub: https://github.com/DIZ-admin/de-en-ru_v1/issues
-

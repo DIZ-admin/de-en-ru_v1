@@ -47,9 +47,21 @@ class Settings(BaseSettings):
     voice_enabled: bool = True
     voice_allowed_mime_types: list[str] = [
         "audio/webm",
+        "video/webm",
         "audio/ogg",
+        "application/ogg",
+        "audio/oga",
         "audio/mpeg",
+        "audio/mpga",
+        "audio/mp4",
+        "audio/mp4a-latm",
+        "audio/x-m4a",
+        "video/mp4",
         "audio/wav",
+        "audio/x-wav",
+        "audio/flac",
+        "audio/x-flac",
+        "video/mpeg",
     ]
     voice_max_duration_seconds: int = 60
     voice_max_file_size_mb: int = 5

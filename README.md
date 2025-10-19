@@ -198,7 +198,7 @@ LOG_LEVEL=INFO
 ALLOWED_ORIGINS=["http://localhost:3000"]
 # Voice translation (JSON-массивы совместимы с pydantic-settings)
 VOICE_ENABLED=true
-VOICE_ALLOWED_MIME_TYPES=["audio/webm","audio/ogg","audio/mpeg","audio/wav"]
+VOICE_ALLOWED_MIME_TYPES=["audio/webm","video/webm","audio/ogg","application/ogg","audio/oga","audio/mpeg","audio/mpga","audio/mp4","audio/mp4a-latm","audio/x-m4a","video/mp4","audio/wav","audio/x-wav","audio/flac","audio/x-flac","video/mpeg"]
 VOICE_MAX_DURATION_SECONDS=60
 VOICE_MAX_FILE_SIZE_MB=5
 VOICE_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe

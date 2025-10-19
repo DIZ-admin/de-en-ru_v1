@@ -1,3 +1,4 @@
+# AGENTS.md — инструкция для ИИ-агентов
 # CRITICAL: ARCHON-FIRST RULE - READ THIS FIRST
   BEFORE doing ANYTHING else, when you see ANY task management scenario:
   1. STOP and check if Archon MCP server is available
@@ -85,3 +86,97 @@ find_tasks(filter_by="project", filter_value="proj-123")
 - Keep queries SHORT (2-5 keywords) for better search results
 - Higher `task_order` = higher priority (0-100)
 - Tasks should be 30 min - 4 hours of work
+
+## Контекст проекта
+- Назначение: потоковый перевод между русским, английским и немецким языками с текстовым и голосовым вводом для поддержки и мультиязычных команд.
+- Архитектура (в 3–5 пунктах):
+  - `backend/` — FastAPI + AsyncOpenAI Responses API, Redis для кеша и rate limiting.
+  - `frontend/` — Next.js 14 (App Router) с SSE-стримингом и голосовым UI.
+  - `docker-compose.yml` + `monitoring/` — локальный стек (Redis, Prometheus, Grafana, Redis exporter).
+  - GitHub Actions (`.github/workflows/`) — lint/test/build/deploy пайплайны.
+- Важные ограничения/политики:
+  - Единственный внешник — OpenAI API через бэкенд; без моков не дергать другие SaaS.
+  - PII и чувствительные данные не логируем и не выносим за пределы окружения; используем фикстуры.
+  - Секреты (`.env`, Vercel, Vault) не трогаем и не коммитим.
+
+## Быстрый старт (локально)
+- Требования: Python 3.11, Poetry, Node.js 20.x (см. `.nvmrc`), npm ≥10, Docker 24+.
+- Установка:
+  - `cd backend && poetry install`
+  - `cd frontend && npm install`
+- Запуск дев-сервера:
+  - Весь стек: `docker compose up --build`
+  - Точка входа отдельно: `cd backend && poetry run uvicorn app.main:app --reload`
+  - UI отдельно: `cd frontend && npm run dev`
+- Прогон тестов:
+  - Backend: `cd backend && poetry run pytest`
+  - Frontend: `cd frontend && npm test`
+- Полная проверка перед коммитом:
+  - `cd backend && poetry run ruff check && poetry run mypy && poetry run pytest`
+  - `cd frontend && npm run lint && npm test && npm run build`
+
+## Как вносить изменения
+- Область изменений: агенту редактировать можно **только** в:
+  - `backend/` (FastAPI, конфигурация, тесты)
+  - `frontend/` (Next.js UI, тесты)
+  - `monitoring/`, `docs/`, `.github/` — по согласованию в задаче
+- Что **нельзя** менять:
+  - `.env*`, секреты, файлы деплоя сторонних окружений
+  - `load-testing/` артефакты, бинарные логи, сгенерированные отчёты
+  - Историю git, настройки Archon/CI без явного указания
+- Требования к стилю:
+  - Линт: `cd backend && poetry run ruff check` / `cd frontend && npm run lint`
+  - Формат: `cd backend && poetry run black .`
+  - Типы/статанализ: `cd backend && poetry run mypy`
+- Конвенции кода: следуем PEP 8 + FastAPI best practices; на фронте — Next.js/Core Web Vitals, React Hooks rules (`react-hooks/*`), Tailwind naming из `frontend/README.md`.
+
+## Тестирование
+- Юнит-тесты: `cd backend && poetry run pytest`, `cd frontend && npm test`
+- Интеграционные (c моками): backend pytest (марки `voice`, `stream`), Playwright — `cd frontend && npm run test:e2e`
+- Снепшоты/визуальные: Playwright артефакты в `frontend/test-results`
+- Покрытие ≥ 80%: backend `poetry run pytest --cov`; frontend Vitest покрытие по умолчанию (`npm test`)
+- Тест-данные/фикстуры: `backend/tests/data/`, `frontend/tests/__mocks__/`
+
+## Правила PR
+- Ветки: `feature/<scope>-<short-desc>` (например, `feature/backend-voice-fallback`)
+- Коммиты: Conventional Commits (`feat(ui): ...`, `fix(api): ...`)
+- Заголовок PR: `[scope] глагол + объект` (пример: `[frontend] handle voice rate limits`)
+- Чек-лист перед PR:
+  - `npm run lint && npm test` ✔
+  - `poetry run ruff check && poetry run pytest` ✔
+  - `poetry run mypy` ✔
+  - Обновлён `AGENTS.md`, если менялись правила ✔
+- Не создавай PR, если падают проверки в разделе «CI».
+
+## CI/CD (как агенту интерпретировать пайплайн)
+- Основные задания CI: lint (Python/JS), unit tests, Playwright smoke, Docker build/publish.
+- Запуск локально как в CI: см. «Полная проверка перед коммитом».
+- Логи и артефакты: GitHub Actions → вкладка «Actions» → `ci.yml`, `deploy.yml`; Playwright отчёты в `frontend/test-results`.
+
+## Безопасность и данные
+- Секреты/ключи: **не** добавлять/редактировать/логировать. Используйте `.env.example` и переменные окружения.
+- Сетевые вызовы:
+  - Разрешено: локальные сервисы (`localhost`, docker compose), OpenAI через backend.
+  - Запрещено: любые внешние домены напрямую из тестов/агента, кроме заранее оговоренных.
+- PII/коммерческие данные: используйте фикстуры (`backend/tests/data/`, `frontend/tests/__mocks__/`), не вставляйте живые данные.
+
+## Мультиагентная система (важно для ролей)
+- Роли агентов:
+  - **Planner**: формирует план (использует Archon), код не трогает.
+  - **Coder**: меняет код только в разрешённых директориях, следует этим правилам.
+  - **Tester**: дописывает тесты, не меняет прод-код без синхронизации с Coder.
+- Оркестрация: план → ветка → реализация → тесты → PR → ревью. Все статусы синхронизируем в Archon.
+- Коммуникация между агентами: через комментарии в задачах Archon или соответствующие артефакты в `docs/`.
+
+## Карта репозитория (ссылки для агентов)
+- `/backend` — FastAPI сервис, запуск: `poetry run uvicorn app.main:app --reload`, тесты: `poetry run pytest`.
+- `/frontend` — Next.js 14 UI, запуск: `npm run dev`, тесты: `npm test`, e2e: `npm run test:e2e`.
+- `/monitoring` — Grafana/Prometheus конфигурация для локального стека, используется `docker compose up`.
+- `/load-testing` — сценарии нагрузки (не редактировать без запроса).
+
+## Локальные правила для подпакетов
+> В подпакетах может лежать свой `AGENTS.md`. Всегда используйте инструкцию из ближайшего файла к редактируемой области.
+
+## Контакты/эскалация
+- Если инструкция не покрывает кейс: остановите работу и создайте issue с тегом `type:agents-help`.
+- Любые блокеры по задачам — заводим комментарий в Archon и ждём уточнений.
