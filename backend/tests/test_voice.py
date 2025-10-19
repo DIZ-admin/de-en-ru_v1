@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import verify_token
-from app.main import app
+from app.main import app, settings
 from app.translate import TranslationResponse, translate_voice_text
 
 
@@ -17,6 +17,10 @@ def reset_overrides():
 
 def test_voice_translate_success(monkeypatch):
     app.dependency_overrides[verify_token] = lambda: "user-1"
+
+    async def fake_check_rate_limit(_: str, weight: int = 1):
+        assert weight == settings.voice_rate_limit_weight
+        return None
 
     async def fake_transcribe(_path: str):
         return SimpleNamespace(
@@ -33,7 +37,10 @@ def test_voice_translate_success(monkeypatch):
             model="gpt-4.1-nano",
         )
 
+    monkeypatch.setattr("app.main.check_rate_limit", fake_check_rate_limit)
+    monkeypatch.setattr("app.main.transcribe_audio_file", fake_transcribe)
     monkeypatch.setattr("app.translate.transcribe_audio_file", fake_transcribe)
+    monkeypatch.setattr("app.main.translate_with_cache", fake_translate)
     monkeypatch.setattr("app.translate.translate_with_cache", fake_translate)
 
     client = TestClient(app)
@@ -55,6 +62,10 @@ def test_voice_translate_success(monkeypatch):
 
 def test_voice_translate_invalid_media(monkeypatch):
     app.dependency_overrides[verify_token] = lambda: "user-1"
+    async def noop_check_rate_limit(*_args, **_kwargs):  # noqa: ARG001
+        return None
+
+    monkeypatch.setattr("app.main.check_rate_limit", noop_check_rate_limit)
     client = TestClient(app)
 
     files = {"file": ("sample.txt", b"", "text/plain")}

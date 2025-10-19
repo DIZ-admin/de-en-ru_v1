@@ -142,7 +142,7 @@ async def translate(
         Translation response
     """
     # Rate limiting
-    await check_rate_limit(user_id)
+    await check_rate_limit(user_id, weight=settings.voice_rate_limit_weight)
 
     # Metrics
     translation_counter.labels(
@@ -210,7 +210,7 @@ async def translate_stream(
         Server-Sent Events stream
     """
     # Rate limiting
-    await check_rate_limit(user_id)
+    await check_rate_limit(user_id, weight=settings.voice_rate_limit_weight)
 
     translation_counter.labels(
         target_lang=request.target_lang,
@@ -278,7 +278,7 @@ async def voice_translate(
     if not settings.voice_enabled:
         raise HTTPException(status_code=503, detail="Voice translation disabled")
 
-    await check_rate_limit(user_id)
+    await check_rate_limit(user_id, weight=settings.voice_rate_limit_weight)
     voice_request_counter.labels(status="requested").inc()
 
     if file.content_type not in settings.voice_allowed_mime_types:

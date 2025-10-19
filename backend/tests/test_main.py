@@ -14,7 +14,7 @@ from app.translate import (
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    async def fake_check_rate_limit(_: str) -> None:
+    async def fake_check_rate_limit(_: str, weight: int = 1) -> None:
         return None
 
     async def fake_translate_with_cache(
@@ -60,7 +60,7 @@ def test_translate_success(client: TestClient):
 
 
 def test_translate_rate_limited(client: TestClient, monkeypatch: pytest.MonkeyPatch):
-    async def raise_limit(_: str) -> None:
+    async def raise_limit(_: str, weight: int = 1) -> None:
         raise HTTPException(status_code=429, detail="Too many requests")
 
     monkeypatch.setattr("app.main.check_rate_limit", raise_limit)

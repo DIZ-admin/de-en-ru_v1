@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     voice_transcription_model: str = "gpt-4o-mini-transcribe"
     voice_detection_confidence_threshold: float = 0.7
     voice_default_target_langs: list[str] = ["ru", "en", "de"]
+    voice_rate_limit_weight: int = 3
+    voice_transcribe_timeout_seconds: int = 20
 
     # OpenAI retry strategy
     openai_retry_max_attempts: int = 3
