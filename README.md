@@ -30,7 +30,7 @@ Real-Time Trilingual Translator — **минималистичная** сист�
 - ✅ **Prometheus метрики**
 - ✅ **Мониторинг** (Prometheus + Grafana) и алёрты по ключевым метрикам
 - ✅ **Security headers** (CSP, HSTS), RS256 и key rotation
-- 🗣️ **Планируется голосовой ввод** — архитектура автоопределения языка описана в [VOICE_INPUT_DESIGN.md](./VOICE_INPUT_DESIGN.md)
+- 🗣️ **Голосовой перевод**: автоопределение языка через OpenAI Whisper, UI для записи/загрузки аудио, расширенные Prometheus метрики
 
 ## 🚀 Быстрый старт
 
@@ -38,8 +38,8 @@ Real-Time Trilingual Translator — **минималистичная** сист�
 
 ```bash
 # 1. Клонировать репозиторий
-git clone https://github.com/DIZ-admin/de-en-ru.git
-cd de-en-ru
+git clone https://github.com/DIZ-admin/de-en-ru_v1.git
+cd de-en-ru_v1
 
 # 2. Создать .env файлы
 cp backend/.env.example backend/.env
@@ -104,6 +104,8 @@ brew services start redis
 | [SECURITY.md](./SECURITY.md) | Документация по безопасности |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Рекомендации для контрибьюторов |
 | [VOICE_INPUT_DESIGN.md](./VOICE_INPUT_DESIGN.md) | Архитектура голосового ввода и автоопределения языка |
+| [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Решение типичных проблем и ошибок |
+| [CHANGELOG.md](./CHANGELOG.md) | История изменений |
 
 ## 🏗️ Архитектура
 
@@ -130,6 +132,15 @@ Frontend (Next.js)                Backend (FastAPI)
 2. Фронтенд получает JWT (`/auth/token`) и отправляет запрос на backend.
 3. Backend проверяет лимиты, читает кэш, при необходимости обращается к OpenAI Responses API.
 4. Ответ стримится обратно через SSE; фронтенд постепенно отображает перевод.
+
+### Голосовой перевод
+
+1. Фронтенд записывает голос (MediaRecorder, `audio/webm;codecs=opus`) либо предлагает загрузить готовый файл и отправляет его на `POST /voice-translate`.
+2. Backend проверяет MIME, размер и длительность, затем обращается к OpenAI Whisper (`gpt-4o-mini-transcribe`), получая транскрипт, код языка и confidence.
+3. Если `confidence ≥ VOICE_DETECTION_CONFIDENCE_THRESHOLD` (0.7 по умолчанию) — перевод выполняется с фиксированным `source_lang`; иначе используется `source_lang="auto"` и язык помечается как `unknown`.
+4. Клиент получает JSON с `transcription`, `detected_lang`, `confidence`, `translations` (RU/EN/DE) и метаданными (длительность, латентности). UI отображает статус, предупреждение о низкой уверенности и позволяет повторить попытку.
+5. Prometheus экспортирует `voice_requests_total`, `voice_detected_language_total`, `voice_transcription_latency_seconds`, `voice_translation_latency_seconds`; Grafana дашборды обновлены под новые панели.
+6. Детальная схема и ограничения описаны в [VOICE_INPUT_DESIGN.md](./VOICE_INPUT_DESIGN.md).
 
 ## 🔧 Технологический стек
 
@@ -185,12 +196,39 @@ RATE_LIMIT_WINDOW_SECONDS=60
 APP_ENV=development
 LOG_LEVEL=INFO
 ALLOWED_ORIGINS=["http://localhost:3000"]
+# Voice translation (JSON-массивы совместимы с pydantic-settings)
+VOICE_ENABLED=true
+VOICE_ALLOWED_MIME_TYPES=["audio/webm","audio/ogg","audio/mpeg","audio/wav"]
+VOICE_MAX_DURATION_SECONDS=60
+VOICE_MAX_FILE_SIZE_MB=5
+VOICE_TRANSCRIPTION_MODEL=gpt-4o-mini-transcribe
+VOICE_DETECTION_CONFIDENCE_THRESHOLD=0.7
+VOICE_RATE_LIMIT_WEIGHT=3
+VOICE_TRANSCRIBE_TIMEOUT_SECONDS=20
+VOICE_DEFAULT_TARGET_LANGS=["ru","en","de"]
 # Redis_* переменные используются при подключении внешнего кэша
 ```
 
 ### Frontend
 ```bash
 NEXT_PUBLIC_API_URL=http://localhost:8000
+# NEXT_PUBLIC_VOICE_MAX_DURATION=60   # опционально, секундах
+```
+
+### Голосовой смоук-тест
+
+```bash
+# Получить JWT
+TOKEN=$(curl -s -X POST "http://localhost:8000/auth/token?user_id=qa-user" | jq -r .access_token)
+
+# Отправить аудио (≤60 c, поддерживаемые MIME: audio/webm|ogg|mpeg|wav)
+curl -X POST http://localhost:8000/voice-translate \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@sample.webm" \
+  -F "target_langs=ru,en,de" | jq
+
+# Убедиться, что метрики инкрементируются
+curl http://localhost:8000/metrics | grep voice_
 ```
 
 ## 🧪 Тестирование
@@ -277,8 +315,8 @@ curl -X POST http://localhost:8000/translate/stream \
 
 ## 📞 Контакты
 
-- GitHub: https://github.com/DIZ-admin/de-en-ru
-- Issues: https://github.com/DIZ-admin/de-en-ru/issues
+- GitHub: https://github.com/DIZ-admin/de-en-ru_v1
+- Issues: https://github.com/DIZ-admin/de-en-ru_v1/issues
 
 ---
 

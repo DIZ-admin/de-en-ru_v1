@@ -44,7 +44,10 @@ de-en-ru/
 ├── DEVELOPMENT.md (этот файл)
 ├── API.md
 ├── ARCHITECTURE_OPENAI_FIRST.md
-└── REFACTORING_SUMMARY.md
+├── REFACTORING_SUMMARY.md
+├── TROUBLESHOOTING.md
+├── DOCUMENTATION_AUDIT_REPORT.md
+└── SECURITY.md
 ```
 
 ## Рабочий процесс
@@ -148,41 +151,6 @@ npm run lint -- --fix
 - Constants: UPPER_SNAKE_CASE (`API_BASE_URL`)
 
 **React Best Practices:**
-```typescript
-"use client";
-
-import { useState } from "react";
-
-interface TranslationPanelProps {
-  onTranslate: (text: string) => void;
-  isLoading?: boolean;
-}
-
-export default function TranslationPanel({
-  onTranslate,
-  isLoading = false,
-}: TranslationPanelProps) {
-  const [text, setText] = useState("");
-
-  return (
-    <div className="space-y-4">
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        className="w-full p-4 border rounded"
-      />
-      <button
-        onClick={() => onTranslate(text)}
-        disabled={isLoading || !text.trim()}
-        className="px-4 py-2 bg-blue-500 text-white rounded"
-      >
-        {isLoading ? "Translating..." : "Translate"}
-      </button>
-    </div>
-  );
-}
-```
-
 ## Backend разработка
 
 ### Структура backend/app/
@@ -190,9 +158,9 @@ export default function TranslationPanel({
 Ключевые файлы backend:
 - `config.py` — pydantic settings, RS256/Redis/security конфигурации.
 - `auth.py` — JWT (создание, валидация, rate limiting, retry-safe логика).
-- `translate.py` — OpenAI Responses API c backoff и кэшированием.
+- `translate.py` — OpenAI Responses API c backoff, кэшированием и функциями `transcribe_audio_file`/`translate_voice_text`.
 - `security.py` — дополнительные HTTP-заголовки.
-- `main.py` — FastAPI, Prometheus, health-check.
+- `main.py` — FastAPI, Prometheus, health-check, `/voice-translate` с валидацией аудио и голосовыми метриками.
 
 ### RS256 ключи и переменные
 
@@ -243,99 +211,24 @@ logger.info("Translation started", extra={
 logger.error("Translation failed", exc_info=True)
 ```
 
-### Testing backend (TODO)
-
-```python
-# tests/test_translate.py
-import pytest
-from app.translate import translate_text
-
-@pytest.mark.asyncio
-async def test_translate_text():
-    result = await translate_text("Hello", "ru")
-    assert result
-    assert isinstance(result, str)
-```
-
 ## Frontend разработка
 
 ### Структура frontend/
 
-```typescript
-// app/page.tsx - Main page
-"use client";
+- `app/page.tsx` — основная страница: форма перевода, обработка SSE, голосовой UI (MediaRecorder, загрузка файла, отображение confidence/метрик).
+- `lib/api.ts` — обёртки над REST/SSE/voice endpoint’ами (`getAuthToken`, `translateText`, `translateTextStream`, `voiceTranslate`).
+- `lib/sse.ts` — универсальный декодер SSE с буферизацией.
+- `tests` и `app/page.test.tsx` — Vitest-тесты (streaming, voice upload, MediaRecorder mock).
 
-import { useState } from "react";
-import { translateText } from "@/lib/api";
-
-export default function Home() {
-  const [text, setText] = useState("");
-  const [result, setResult] = useState("");
-
-  const handleTranslate = async () => {
-    const translated = await translateText(text, "ru");
-    setResult(translated);
-  };
-
-  return <div>{/* UI */}</div>;
-}
-
-
-// lib/api.ts - API client
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-export async function translateText(text: string, targetLang: string) {
-  const response = await fetch(`${API_URL}/translate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, target_lang: targetLang })
-  });
-
-  if (!response.ok) {
-    throw new Error(`Translation failed: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.translated_text;
-}
-```
+> При добавлении новых UI-компонентов сохраняем философию «тонкого клиента»: минимум состояний, весь AI-интеллект в backend.
 
 ### Using Server-Sent Events (SSE)
 
-```typescript
-export async function* translateTextStream(
-  text: string,
-  targetLang: string,
-  token: string
-): AsyncGenerator<string> {
-  const response = await fetch(`${API_URL}/translate/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
-    },
-    body: JSON.stringify({ text, target_lang: targetLang }),
-  });
+- Используем `lib/sse.ts` с классом `SSEDecoder`, который буферизует обрезанные `data:` строки и покрыт regression-тестами (`lib/sse.test.ts`).
+- `translateTextStream` в `lib/api.ts` читает `ReadableStream`, передаёт отрезки в `SSEDecoder` и возвращает асинхронный генератор текстовых чанков.
+- При ошибках соединения выбрасывается исключение с user-friendly сообщением, UI показывает алерт и предлагает повторить попытку.
 
-  const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const chunk = decoder.decode(value);
-    const lines = chunk.split("\n");
-
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const data = line.slice(6);
-        yield data;
-      }
-    }
-  }
-}
-```
+> Детали реализации см. `frontend/lib/api.ts` и тесты `frontend/tests`.
 
 ## Тестирование
 
@@ -351,7 +244,7 @@ poetry run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
 poetry run pytest tests/test_translate.py
 ```
 
-Основные сценарии: кэширование переводов (Redis + fallback), rate limiting, mock Responses API.
+Основные сценарии: кэш/Redis + fallback, rate limiting (включая `weight`), ошибки/таймауты OpenAI, голосовая транскрипция и перевод с моками Whisper/Responses.
 
 ### Frontend (Vitest / Playwright)
 
@@ -360,6 +253,9 @@ cd frontend
 
 # Unit тесты (Vitest + coverage v8)
 npm test
+
+# Тесты голосового UI (MediaRecorder/file upload)
+npm test -- app/page.test.tsx
 
 # E2E (Playwright, требуется `npx playwright install`)
 npm run test:e2e

@@ -171,6 +171,52 @@ data: {}
 - `translation_start` — Начало перевода
 - `data` — Фрагмент перевода (текст)
 - `translation_complete` — Перевод завершен
+- `error` — Ошибка (с кодом и сообщением)
+
+### POST /voice-translate
+
+Принимает аудиофайл, выполняет транскрипцию через OpenAI Whisper и возвращает переводы с автоопределением языка.
+
+**Request:**
+```bash
+curl -X POST http://localhost:8000/voice-translate \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@sample.webm" \
+  -F "target_langs=ru,en"
+```
+
+**Request Form Data:**
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|----------|
+| `file` | `multipart/form-data` (audio/webm, audio/ogg, audio/mpeg, audio/wav) | ✅ | Аудиозапись длительностью ≤ `VOICE_MAX_DURATION_SECONDS` и размером ≤ `VOICE_MAX_FILE_SIZE_MB` |
+| `target_langs` | строка, CSV | ❌ | Список целевых языков (по умолчанию `["ru","en","de"]`) |
+
+**Response (200 OK):**
+```json
+{
+  "transcription": "Hallo Welt",
+  "detected_lang": "de",
+  "confidence": 0.82,
+  "translations": {
+    "ru": "Привет мир",
+    "en": "Hello world",
+    "de": "Hallo Welt"
+  },
+  "metadata": {
+    "audio_duration_s": 3.2,
+    "transcription_latency_ms": 410,
+    "translation_latency_ms": 890
+  }
+}
+```
+
+**Ошибки:**
+- `400 Bad Request` — неподдерживаемый формат, слишком длинное/пустое аудио, некорректные target_langs
+- `413 Payload Too Large` — размер файла превышает лимит
+- `415 Unsupported Media Type` — MIME тип вне белого списка
+- `429 Too Many Requests` — превышен rate limit (учитывает `VOICE_RATE_LIMIT_WEIGHT`)
+- `502 Bad Gateway` — OpenAI Whisper/Responses временно недоступны
+- `503 Service Unavailable` — голосовые функции отключены (`VOICE_ENABLED=false`)
 
 ## Streaming (SSE)
 
@@ -412,6 +458,97 @@ curl -X POST http://localhost:8000/translate/stream \
     "source_lang": "en",
     "target_lang": "ru"
   }'
+```
+
+### Голосовой перевод (cURL)
+
+```bash
+# Получить токен
+TOKEN=$(curl -s -X POST "http://localhost:8000/auth/token?user_id=demo-user" | jq -r '.access_token')
+
+# Отправить аудиофайл для перевода
+curl -X POST http://localhost:8000/voice-translate \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@sample.webm" \
+  -F "target_langs=ru,en,de" | jq
+
+# Ответ содержит:
+# - transcription: распознанный текст
+# - detected_lang: автоопределённый язык (ru/en/de или null)
+# - confidence: уверенность в определении языка (0.0-1.0)
+# - translations: переводы на целевые языки
+# - metadata: длительность аудио и латентности
+```
+
+### Голосовой перевод (Python)
+
+```python
+import requests
+
+API_URL = "http://localhost:8000"
+
+def voice_translate(audio_file_path: str, target_langs: str = "ru,en,de") -> dict:
+    """Translate audio file."""
+    token = get_token()  # используйте функцию из примера выше
+
+    with open(audio_file_path, "rb") as f:
+        files = {"file": f}
+        data = {"target_langs": target_langs}
+
+        response = requests.post(
+            f"{API_URL}/voice-translate",
+            headers={"Authorization": f"Bearer {token}"},
+            files=files,
+            data=data,
+        )
+
+    response.raise_for_status()
+    return response.json()
+
+# Usage
+result = voice_translate("sample.webm")
+print(f"Transcription: {result['transcription']}")
+print(f"Detected language: {result['detected_lang']}")
+print(f"Confidence: {result['confidence']}")
+print(f"Translations: {result['translations']}")
+print(f"Metadata: {result['metadata']}")
+```
+
+### Голосовой перевод (TypeScript/JavaScript)
+
+```typescript
+async function voiceTranslate(
+  audioFile: File,
+  targetLangs: string = "ru,en,de"
+): Promise<VoiceTranslationResponse> {
+  const token = await getAuthToken();
+
+  const formData = new FormData();
+  formData.append("file", audioFile);
+  formData.append("target_langs", targetLangs);
+
+  const response = await fetch(`${API_URL}/voice-translate`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Voice translation failed: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// Usage
+const audioFile = new File([audioBlob], "recording.webm", { type: "audio/webm" });
+const result = await voiceTranslate(audioFile);
+console.log("Transcription:", result.transcription);
+console.log("Detected language:", result.detected_lang);
+console.log("Confidence:", result.confidence);
+console.log("Translations:", result.translations);
 ```
 
 ## Rate Limiting
