@@ -44,6 +44,18 @@
 
 ## CI/CD Pipeline
 
+### GitHub Environments
+
+Для GitHub Actions создайте три окружения в Settings → Environments:
+
+| Environment | Назначение | Образы | Секреты |
+|-------------|------------|--------|---------|
+| `dev`       | Превью ветки `dev`, генерация Docker-образов с тегом `:dev` | `backend:dev`, `frontend:dev` | `OPENAI_API_KEY`, `JWT_SECRET_KEY`, при необходимости дополнительные переменные |
+| `staging`   | Проверка стабильности перед продом | `backend:staging`, `frontend:staging` | staging-ключи сервисов, OpenAI, Redis, т.д. |
+| `production`| Продакшн-выкатка, ретег `:latest` | `backend:latest`, `frontend:latest` | боевые секреты, сервисные аккаунты |
+
+Все окружения используют `GITHUB_TOKEN` для публикации образов в GHCR; добавьте остальные секреты (OpenAI, Redis, Terraform и т.д.) вручную через UI.
+
 ### GitHub Actions
 
 - **CI (`.github/workflows/ci.yml`)**
@@ -56,6 +68,9 @@
   - `deploy-staging`: собирает и пушит образы в GHCR (`:staging` и `:${{ github.sha }}`), шаг-плейсхолдер для IaC.
   - `deploy-production`: требует завершения staging job и одобрения в среде `production`, ретегирует образы как `:latest`.
   - Встроенные permissions позволяют использовать GitHub Container Registry без дополнительных секретов.
+- **Deploy Dev (`.github/workflows/deploy-dev.yml`)**
+  - Триггеры: push в `dev` и ручной запуск.
+  - `deploy-dev`: публикует preview-образы (`:dev`) и использует окружение `dev` для хранения секретов/approvals.
 
 > **Примечание:** для реального деплоя интегрируйте шаги Terraform/Helm вместо плейсхолдеров.
 
