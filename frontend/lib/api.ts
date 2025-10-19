@@ -30,6 +30,11 @@ export interface VoiceTranslationResponse {
   };
 }
 
+export interface VoiceFormats {
+  mime_types: string[];
+  extensions: string[];
+}
+
 /**
  * Get JWT token from backend
  */
@@ -74,6 +79,15 @@ export async function voiceTranslate(
       detail = undefined;
     }
     throw new Error(detail || "Voice translation failed");
+  }
+
+  return response.json();
+}
+
+export async function getVoiceFormats(): Promise<VoiceFormats> {
+  const response = await fetch(`${API_URL}/voice/formats`);
+  if (!response.ok) {
+    throw new Error("Failed to load voice formats");
   }
 
   return response.json();

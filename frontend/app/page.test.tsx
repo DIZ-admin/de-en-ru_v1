@@ -6,12 +6,14 @@ import Home from "./page";
 
 const mockGetAuthToken = vi.fn();
 const mockTranslateStream = vi.fn();
+const mockGetVoiceFormats = vi.fn();
 const mockVoiceTranslate = vi.fn();
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
 vi.mock("@/lib/api", () => ({
   getAuthToken: (...args: unknown[]) => mockGetAuthToken(...args),
   translateTextStream: (...args: unknown[]) => mockTranslateStream(...args),
+  getVoiceFormats: (...args: unknown[]) => mockGetVoiceFormats(...args),
   voiceTranslate: (...args: unknown[]) => mockVoiceTranslate(...args),
 }));
 
@@ -25,7 +27,12 @@ describe("Home page", () => {
   beforeEach(() => {
     mockGetAuthToken.mockReset();
     mockTranslateStream.mockReset();
+    mockGetVoiceFormats.mockReset();
     mockVoiceTranslate.mockReset();
+    mockGetVoiceFormats.mockResolvedValue({
+      mime_types: [],
+      extensions: [],
+    });
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -93,6 +100,10 @@ describe("Home page", () => {
   });
 
   it("handles voice file upload and surfaces metadata", async () => {
+    mockGetVoiceFormats.mockResolvedValueOnce({
+      mime_types: ["audio/opus", "audio/webm"],
+      extensions: ["opus", "webm"],
+    });
     mockGetAuthToken.mockResolvedValue("token-voice");
     mockVoiceTranslate.mockResolvedValue({
       transcription: "Hallo Welt",
@@ -117,8 +128,12 @@ describe("Home page", () => {
     });
 
     const fileInput = screen.getByLabelText(/upload audio file/i);
-    const file = new File([new Uint8Array([1, 2, 3])], "sample.webm", {
-      type: "audio/webm",
+    await waitFor(() => {
+      const acceptAttr = fileInput.getAttribute("accept") ?? "";
+      expect(acceptAttr.split(",")).toEqual(expect.arrayContaining(["audio/opus", ".opus"]));
+    });
+    const file = new File([new Uint8Array([1, 2, 3])], "sample.opus", {
+      type: "audio/opus",
     });
 
     await act(async () => {

@@ -50,6 +50,7 @@ _CUSTOM_AUDIO_MIMETYPES: dict[str, str] = {
     "audio/flac": ".flac",
     "audio/x-flac": ".flac",
     "audio/oga": ".ogg",
+    "application/ogg": ".ogg",
     "video/webm": ".webm",
     "video/mp4": ".mp4",
     "video/mpeg": ".mpeg",
@@ -59,6 +60,27 @@ for _mime, _ext in _CUSTOM_AUDIO_MIMETYPES.items():
     mimetypes.add_type(_mime, _ext, strict=False)
 
 _ALLOWED_AUDIO_MIME_TYPES = {mime.lower() for mime in settings.voice_allowed_mime_types}
+
+
+def _mime_to_extension(mime: str) -> str | None:
+    extension = mimetypes.guess_extension(mime)
+    if not extension and mime in _CUSTOM_AUDIO_MIMETYPES:
+        extension = _CUSTOM_AUDIO_MIMETYPES[mime]
+    if extension and extension.startswith("."):
+        return extension
+    return None
+
+
+def _derive_allowed_extensions() -> list[str]:
+    extensions = {
+        ext[1:] if ext.startswith(".") else ext
+        for ext in (
+            (_mime_to_extension(mime) or "").lower()
+            for mime in _ALLOWED_AUDIO_MIME_TYPES
+        )
+        if ext
+    }
+    return sorted(extensions)
 
 
 # Prometheus metrics
@@ -302,6 +324,19 @@ async def translate_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+# ===== Voice metadata =====
+
+
+@app.get("/voice/formats")
+async def get_voice_formats() -> dict[str, list[str]]:
+    """Return supported voice MIME types and file extensions."""
+
+    return {
+        "mime_types": sorted(_ALLOWED_AUDIO_MIME_TYPES),
+        "extensions": _derive_allowed_extensions(),
+    }
 
 
 # ============= Voice Translation =============

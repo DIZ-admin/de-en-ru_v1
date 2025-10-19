@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   getAuthToken,
   translateTextStream,
   voiceTranslate,
+  getVoiceFormats,
   type TranslationRequest,
   type VoiceTranslationResponse,
 } from "@/lib/api";
@@ -49,9 +50,7 @@ const DEFAULT_ALLOWED_EXTENSIONS = [
   "mpeg",
 ];
 
-const SUPPORTED_FORMATS_LABEL = ["webm", "ogg", "oga", "m4a", "mp4", "mp3", "mpga", "wav", "flac"];
-
-const parseAllowedAudioTypes = (): string[] => {
+const readEnvMimeTypes = (): string[] => {
   const raw = process.env.NEXT_PUBLIC_ALLOWED_AUDIO_TYPES;
   if (!raw) {
     return DEFAULT_ALLOWED_AUDIO_TYPES;
@@ -59,9 +58,7 @@ const parseAllowedAudioTypes = (): string[] => {
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => (typeof item === "string" ? item.toLowerCase() : null))
-        .filter((item): item is string => Boolean(item));
+      return parsed.filter((item): item is string => typeof item === "string");
     }
   } catch (err) {
     console.warn("Failed to parse NEXT_PUBLIC_ALLOWED_AUDIO_TYPES:", err);
@@ -69,41 +66,34 @@ const parseAllowedAudioTypes = (): string[] => {
   return DEFAULT_ALLOWED_AUDIO_TYPES;
 };
 
-const ALLOWED_AUDIO_TYPES = new Set(parseAllowedAudioTypes());
-const ALLOWED_AUDIO_EXTENSIONS = new Set<string>(DEFAULT_ALLOWED_EXTENSIONS);
-const ACCEPT_ATTRIBUTE = Array.from(
-  new Set([
-    ...ALLOWED_AUDIO_TYPES,
-    ...Array.from(ALLOWED_AUDIO_EXTENSIONS).map((ext) => `.${ext}`),
-  ]),
-).join(",");
+const readEnvExtensions = (): string[] => {
+  const raw = process.env.NEXT_PUBLIC_ALLOWED_AUDIO_EXTENSIONS;
+  if (!raw) {
+    return DEFAULT_ALLOWED_EXTENSIONS;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item): item is string => typeof item === "string");
+    }
+  } catch (err) {
+    console.warn("Failed to parse NEXT_PUBLIC_ALLOWED_AUDIO_EXTENSIONS:", err);
+  }
+  return DEFAULT_ALLOWED_EXTENSIONS;
+};
 
-const UNSUPPORTED_AUDIO_MESSAGE = `Unsupported audio format. Supported formats: ${SUPPORTED_FORMATS_LABEL.join(
-  ", ",
-)}`;
+const normalizeMimeTypes = (values: string[]): string[] =>
+  values.map((value) => value.toLowerCase()).filter((value) => value.length > 0);
+
+const normalizeExtensions = (values: string[]): string[] =>
+  values
+    .map((value) => value.replace(/^[.]/, "").toLowerCase())
+    .filter((value) => value.length > 0);
 
 const getFileExtension = (fileName: string | undefined | null): string | null => {
   if (!fileName || !fileName.includes(".")) return null;
   const [, ext] = /.+\.([^.]+)$/.exec(fileName) ?? [];
   return ext ? ext.toLowerCase() : null;
-};
-
-const isAllowedAudioFile = (file: File): boolean => {
-  const type = (file.type ?? "").toLowerCase();
-  if (
-    type &&
-    (type.startsWith("audio/") || type.startsWith("video/") || type === "application/ogg") &&
-    ALLOWED_AUDIO_TYPES.has(type)
-  ) {
-    return true;
-  }
-
-  const extension = getFileExtension(file.name);
-  if (extension && ALLOWED_AUDIO_EXTENSIONS.has(extension)) {
-    return true;
-  }
-
-  return false;
 };
 
 export default function Home() {
@@ -122,7 +112,41 @@ export default function Home() {
   const [voiceTranscription, setVoiceTranscription] = useState<string>("");
   const [voiceMetrics, setVoiceMetrics] = useState<VoiceMetrics | null>(null);
   const [voiceError, setVoiceError] = useState<string>("");
+  const [allowedMimeTypes, setAllowedMimeTypes] = useState<string[]>(() => normalizeMimeTypes(readEnvMimeTypes()));
+  const [allowedExtensions, setAllowedExtensions] = useState<string[]>(() => normalizeExtensions(readEnvExtensions()));
   const [supportsMediaRecorder, setSupportsMediaRecorder] = useState<boolean>(false);
+
+  const allowedMimeTypeSet = useMemo(() => new Set(allowedMimeTypes), [allowedMimeTypes]);
+  const allowedExtensionSet = useMemo(() => new Set(allowedExtensions), [allowedExtensions]);
+  const supportedFormatsLabel = useMemo(() => {
+    const unique = Array.from(new Set(allowedExtensions));
+    return unique.length ? unique : DEFAULT_ALLOWED_EXTENSIONS;
+  }, [allowedExtensions]);
+  const acceptAttribute = useMemo(() => {
+    const values = [
+      ...allowedMimeTypes,
+      ...supportedFormatsLabel.map((extension) => `.${extension}`),
+    ];
+    return Array.from(new Set(values)).join(",");
+  }, [allowedMimeTypes, supportedFormatsLabel]);
+  const unsupportedMessage = useMemo(
+    () => `Unsupported audio format. Supported formats: ${supportedFormatsLabel.join(", ")}`,
+    [supportedFormatsLabel],
+  );
+
+  const isAllowedAudioFile = (file: File): boolean => {
+    const type = (file.type ?? "").toLowerCase();
+    if (type && allowedMimeTypeSet.has(type)) {
+      return true;
+    }
+
+    const extension = getFileExtension(file.name);
+    if (extension && allowedExtensionSet.has(extension)) {
+      return true;
+    }
+
+    return false;
+  };
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -145,6 +169,28 @@ export default function Home() {
       }
 
       streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    getVoiceFormats()
+      .then((formats) => {
+        if (cancelled) return;
+        if (Array.isArray(formats?.mime_types) && formats.mime_types.length) {
+          setAllowedMimeTypes(normalizeMimeTypes(formats.mime_types));
+        }
+        if (Array.isArray(formats?.extensions) && formats.extensions.length) {
+          setAllowedExtensions(normalizeExtensions(formats.extensions));
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to load voice formats", err);
+      });
+
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -305,9 +351,9 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!isAllowedAudioFile(file)) {
-      setVoiceStatus(UNSUPPORTED_AUDIO_MESSAGE);
-      setError(UNSUPPORTED_AUDIO_MESSAGE);
-      setVoiceError(UNSUPPORTED_AUDIO_MESSAGE);
+      setVoiceStatus(unsupportedMessage);
+      setError(unsupportedMessage);
+      setVoiceError(unsupportedMessage);
       setVoiceTranscription("");
       setVoiceDetectedLang(null);
       setVoiceConfidence(null);
@@ -326,9 +372,9 @@ export default function Home() {
 
   const submitVoiceFile = async (file: File) => {
     if (!isAllowedAudioFile(file)) {
-      setVoiceStatus(UNSUPPORTED_AUDIO_MESSAGE);
-      setError(UNSUPPORTED_AUDIO_MESSAGE);
-      setVoiceError(UNSUPPORTED_AUDIO_MESSAGE);
+      setVoiceStatus(unsupportedMessage);
+      setError(unsupportedMessage);
+      setVoiceError(unsupportedMessage);
       setVoiceTranscription("");
       setVoiceDetectedLang(null);
       setVoiceConfidence(null);
@@ -438,7 +484,7 @@ export default function Home() {
         <section className="bg-white rounded-lg shadow p-6 space-y-4">
           <h2 className="text-lg font-semibold">Voice Translation</h2>
           <p className="text-sm text-gray-600">
-            Record up to {VOICE_MAX_DURATION} seconds of audio (webm/ogg/m4a/mp3/wav/flac) and we will detect the language automatically.
+            Record up to {VOICE_MAX_DURATION} seconds of audio. Supported formats: {supportedFormatsLabel.join(", ")}.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3">
@@ -476,7 +522,7 @@ export default function Home() {
               id="voice-upload"
               name="voice-upload"
               type="file"
-              accept={ACCEPT_ATTRIBUTE}
+              accept={acceptAttribute}
               onChange={handleVoiceFileUpload}
               className="w-full text-sm"
             />
